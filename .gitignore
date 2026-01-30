@@ -1,0 +1,15 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+/.wwebjs_auth/
+/.idea/
+*.DotSettings.user
+
+# Environment variables (never commit real phone numbers)
+.env
+
+# NuGet packages
+*.nupkg
+*.snupkg

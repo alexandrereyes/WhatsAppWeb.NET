@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+        <!-- NuGet Package Metadata -->
+        <PackageId>WhatsAppWeb.NET</PackageId>
+        <Version>0.0.2</Version>
+        <Authors>Alexandre Reyes Martins</Authors>
+        <Description>C# / .NET port of whatsapp-web.js — a WhatsApp Web client library using Microsoft Playwright for browser automation. Supports QR Code and Phone Pairing Code authentication, messaging, chats, groups, labels, and profile management.</Description>
+        <PackageTags>whatsapp;whatsapp-web;playwright;bot;messaging;chat</PackageTags>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/alexandrereyes/WhatsAppWeb.NET</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/alexandrereyes/WhatsAppWeb.NET</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+
+        <!-- SourceLink for deterministic builds -->
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="../../README.md" Pack="true" PackagePath="/" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Humanizer.Core" Version="3.0.1" />
+        <PackageReference Include="JetBrains.Annotations" Version="2025.2.4" PrivateAssets="all" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
+        <PackageReference Include="Microsoft.Playwright" Version="1.57.0" />
+        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="all" />
+    </ItemGroup>
+
+</Project>

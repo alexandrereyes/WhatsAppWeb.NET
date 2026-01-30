@@ -1,3 +1,5 @@
+using DotNetEnv;
+
 namespace WhatsAppWebTests.Reqnroll;
 
 /// <summary>
@@ -15,11 +17,22 @@ public enum TestPhone
 /// Required variables:
 ///   - PHONE_NUMBER: phone number for pairing/authentication
 ///   - TARGET_TEST_PHONE: target phone for test operations
+/// Automatically loads the .env file from the repository root if present.
 /// </summary>
 public static class TestConfiguration
 {
     private const string PhoneNumberVar = "PHONE_NUMBER";
     private const string TargetTestPhoneVar = "TARGET_TEST_PHONE";
+
+    static TestConfiguration()
+    {
+        var rootDir = FindRepositoryRoot();
+        if (rootDir == null) return;
+
+        var envPath = Path.Combine(rootDir, ".env");
+        if (File.Exists(envPath))
+            Env.Load(envPath);
+    }
 
     /// <summary>Phone number used for WhatsApp pairing/authentication.</summary>
     public static string PhoneNumber => GetRequired(PhoneNumberVar);
@@ -47,5 +60,18 @@ public static class TestConfiguration
                 "See the .env.example file in the project root.");
 
         return value;
+    }
+
+    private static string? FindRepositoryRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir != null)
+        {
+            if (Directory.Exists(Path.Combine(dir, ".git")))
+                return dir;
+            dir = Directory.GetParent(dir)?.FullName;
+        }
+
+        return null;
     }
 }

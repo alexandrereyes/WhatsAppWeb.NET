@@ -49,14 +49,6 @@ On your phone, go to **WhatsApp > Linked Devices > Link a Device > Enter code** 
 
 After pairing, the tests run automatically. The session is persisted on disk (`.wwebjs_auth/`), so subsequent runs will not require pairing again.
 
-### 5. Infrastructure tests (no WhatsApp required)
-
-If you want to validate that the setup is working before pairing:
-
-```bash
-dotnet test WhatsAppWeb.slnx --no-build --filter "Category=infrastructure"
-```
-
 ## Library usage
 
 ```csharp

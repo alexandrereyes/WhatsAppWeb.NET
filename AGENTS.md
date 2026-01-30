@@ -60,9 +60,6 @@ dotnet build WhatsAppWeb.slnx -v q
 # Run all tests
 dotnet test WhatsAppWeb.slnx --no-build
 
-# Infrastructure tests only (do not require WhatsApp authentication)
-dotnet test WhatsAppWeb.slnx --no-build --filter "Category=infrastructure"
-
 # By scenario name (substring match)
 dotnet test WhatsAppWeb.slnx --no-build --filter "DisplayName~chat list"
 
@@ -93,4 +90,4 @@ The code must be entered in the WhatsApp mobile app under **Linked Devices > Lin
 | Pairing code does not appear | Check `"diagnosticMessages": true` in `xunit.runner.json` |
 | Authentication timeout | Enter the code on the mobile device within 1 minute |
 | Tests hang without output | Always run `dotnet build` separately before `dotnet test --no-build` |
-| Infrastructure test fails | Check that `TestOutputLoggerProvider` is configured in `Hooks.cs` |
+

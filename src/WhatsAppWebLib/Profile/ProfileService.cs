@@ -75,7 +75,7 @@ public class ProfileService(IPage page, HttpClient httpClient, ILogger logger)
     {
         try
         {
-            return await page.EvaluateAsync<bool>(
+            var result = await page.EvaluateAsync<bool>(
                 """
                 async (displayName) => {
                     if (!window.Store.Conn.canSetMyPushname()) return false;
@@ -83,6 +83,11 @@ public class ProfileService(IPage page, HttpClient httpClient, ILogger logger)
                     return true;
                 }
                 """, displayName);
+
+            if (!result)
+                logger.LogWarning("Cannot set display name: this account type does not allow changing the push name (e.g. WhatsApp Business)");
+
+            return result;
         }
         catch (Exception ex)
         {

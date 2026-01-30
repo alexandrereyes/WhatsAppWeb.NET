@@ -4,33 +4,283 @@ using Microsoft.Playwright;
 
 namespace WhatsAppWebLib.Message;
 
-public class MessageService(IPage page, JsonSerializerOptions jsonOptions, ILogger logger)
+public class MessageService(IPage page, JsonSerializerOptions jsonOptions, ILogger logger, string? ffmpegPath = null)
 {
+    private readonly MediaPreprocessor _preprocessor = new(logger, ffmpegPath ?? "ffmpeg");
     // @wwebjs-source WWebJS.sendMessage -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/util/Injected/Utils.js#L26-L369
     // @wwebjs-source Client.sendMessage -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/Client.js#L983-L1129
     // @wwebjs-source WWebJS.getChat -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/util/Injected/Utils.js#L568-L590
-    public async Task<string?> SendAsync(string chatId, string message)
+
+    /// <summary>
+    /// Sends a text message to the specified chat.
+    /// </summary>
+    public Task<string?> SendAsync(string chatId, string content)
+        => SendCoreAsync(chatId, content, null);
+
+    /// <summary>
+    /// Sends a media message to the specified chat.
+    /// When <paramref name="content"/> is provided, it becomes the caption.
+    /// </summary>
+    public Task<string?> SendAsync(string chatId, MessageMedia media, string? content = null)
+        => SendCoreAsync(chatId, content ?? string.Empty, new MessageSendOptions { Media = media });
+
+    /// <summary>
+    /// Sends a message with full options (media, caption, reply, mentions, etc.).
+    /// When <see cref="MessageSendOptions.Media"/> is set, the <paramref name="content"/> becomes the caption.
+    /// </summary>
+    public Task<string?> SendAsync(string chatId, string content, MessageSendOptions options)
+        => SendCoreAsync(chatId, content, options);
+
+    // @wwebjs-source Client.sendMessage -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/Client.js#L983-L1129
+    // @wwebjs-source WWebJS.sendMessage -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/util/Injected/Utils.js#L26-L369
+    // @wwebjs-source WWebJS.processMediaData -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/util/Injected/Utils.js#L462-L536
+    // @wwebjs-source WWebJS.mediaInfoToFile -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/util/Injected/Utils.js#L1184-L1195
+    private async Task<string?> SendCoreAsync(string chatId, string content, MessageSendOptions? options)
     {
         chatId = WhatsAppId.EnsureChatSuffix(chatId);
 
         try
         {
+            // Server-side preprocessing via ffmpeg (before passing to browser)
+            options = await PreprocessMediaAsync(options);
+
+            var internalOptions = BuildInternalOptions(content, options, out var effectiveContent);
+
             return await page.EvaluateAsync<string?>(
                 """
                 async (args) => {
-                    const [chatId, content] = args;
+                    const { chatId, content, options, sendSeen } = args;
                     const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
                     if (!chat) return null;
-                    const msg = await window.WWebJS.sendMessage(chat, content, {});
-                    return msg?.id?._serialized || msg?.id?.id || null;
+
+                    if (sendSeen) {
+                        await window.WWebJS.sendSeen(chatId);
+                    }
+
+                    // When a pre-generated waveform is provided (from server-side ffmpeg),
+                    // temporarily override generateWaveform so the browser doesn't need
+                    // Web Audio API (which fails in headless Chromium).
+                    const originalGenerateWaveform = window.WWebJS.generateWaveform;
+                    if (options.pttWaveform) {
+                        window.WWebJS.generateWaveform = async () => new Uint8Array(options.pttWaveform);
+                    }
+
+                    try {
+                        const msg = await window.WWebJS.sendMessage(chat, content, options);
+                        return msg?.id?._serialized || msg?.id?.id || null;
+                    } catch (e) {
+                        throw new Error('SendMessage failed: ' + (e?.message || e?.toString?.() || JSON.stringify(e)));
+                    } finally {
+                        window.WWebJS.generateWaveform = originalGenerateWaveform;
+                    }
                 }
-                """, new object[] { chatId, message });
+                """, new
+                {
+                    chatId,
+                    content = effectiveContent,
+                    options = internalOptions,
+                    sendSeen = options?.SendSeen ?? true
+                });
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error sending message: {ChatId}", chatId);
+            logger.LogError(ex, "Error sending message to {ChatId}", chatId);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Server-side media preprocessing using ffmpeg.
+    /// Handles two cases that cannot be done browser-side in headless Chromium:
+    /// 1. Voice messages (PTT): pre-generates the 64-sample waveform
+    /// 2. Video stickers: converts video to animated WebP + injects EXIF metadata
+    /// </summary>
+    // @wwebjs-source Client.sendMessage sticker preprocessing -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/Client.js#L1073-L1081
+    // @wwebjs-source Util.formatToWebpSticker -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/util/Util.js#L80-L190
+    // @wwebjs-source WWebJS.generateWaveform -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/util/Injected/Utils.js#L1145-L1182
+    private async Task<MessageSendOptions?> PreprocessMediaAsync(MessageSendOptions? options)
+    {
+        if (options?.Media is null) return options;
+
+        var media = options.Media;
+        var modified = false;
+        byte[]? waveform = null;
+
+        // Voice/PTT: convert audio to OGG/Opus (required by WhatsApp) and pre-generate waveform
+        if (options.SendAudioAsVoice)
+        {
+            // WhatsApp PTT requires OGG/Opus; convert if not already in that format
+            if (!media.MimeType.Contains("opus", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogDebug("Converting audio to OGG/Opus for voice message");
+                var opusMedia = await _preprocessor.ConvertToOggOpusAsync(media);
+                if (opusMedia is not null)
+                {
+                    media = opusMedia;
+                    modified = true;
+                    logger.LogDebug("Audio converted to OGG/Opus ({Size} bytes)", media.FileSize);
+                }
+                else
+                {
+                    logger.LogWarning("Audio to OGG/Opus conversion failed, sending original format");
+                }
+            }
+
+            logger.LogDebug("Pre-generating waveform for voice message");
+            var audioBytes = Convert.FromBase64String(media.Data);
+            waveform = await _preprocessor.GenerateWaveformAsync(audioBytes);
+            if (waveform is not null)
+                logger.LogDebug("Waveform generated: {Length} samples", waveform.Length);
+            else
+                logger.LogWarning("Waveform generation failed, browser will attempt fallback");
+        }
+
+        // Video sticker: convert video to animated WebP + inject EXIF
+        if (options.SendMediaAsSticker && media.MimeType.Contains("video", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogDebug("Converting video to WebP sticker");
+            var webpMedia = await _preprocessor.ConvertVideoToWebpStickerAsync(media);
+            if (webpMedia is not null)
+            {
+                // Inject sticker EXIF metadata if name/author provided
+                if (!string.IsNullOrEmpty(options.StickerName) || !string.IsNullOrEmpty(options.StickerAuthor))
+                {
+                    var webpBytes = Convert.FromBase64String(webpMedia.Data);
+                    var exifBytes = MediaPreprocessor.InjectStickerExif(
+                        webpBytes, options.StickerName, options.StickerAuthor, options.StickerCategories);
+                    webpMedia = new MessageMedia
+                    {
+                        MimeType = webpMedia.MimeType,
+                        Data = Convert.ToBase64String(exifBytes),
+                        FileName = webpMedia.FileName,
+                        FileSize = exifBytes.Length
+                    };
+                }
+
+                media = webpMedia;
+                modified = true;
+                logger.LogDebug("Video converted to WebP sticker ({Size} bytes)", media.FileSize);
+            }
+            else
+            {
+                logger.LogWarning("Video to WebP sticker conversion failed");
+            }
+        }
+
+        // Image sticker: EXIF injection only (browser handles image→webp via StickerTools)
+        // The browser-side toStickerData converts the image, but EXIF must be injected
+        // after conversion. For images, we pass the EXIF metadata and let the JS handle it.
+        // Note: For image stickers, EXIF is injected in the JS side after toStickerData converts to webp.
+
+        if (!modified && waveform is null) return options;
+
+        // Return new options with preprocessed media and/or waveform
+        return new MessageSendOptions
+        {
+            LinkPreview = options.LinkPreview,
+            SendSeen = options.SendSeen,
+            SendAudioAsVoice = options.SendAudioAsVoice,
+            SendVideoAsGif = options.SendVideoAsGif,
+            SendMediaAsSticker = options.SendMediaAsSticker,
+            SendMediaAsDocument = options.SendMediaAsDocument,
+            SendMediaAsHd = options.SendMediaAsHd,
+            IsViewOnce = options.IsViewOnce,
+            Caption = options.Caption,
+            QuotedMessageId = options.QuotedMessageId,
+            ParseVCards = options.ParseVCards,
+            Media = modified ? media : options.Media,
+            Mentions = options.Mentions,
+            StickerAuthor = options.StickerAuthor,
+            StickerName = options.StickerName,
+            StickerCategories = options.StickerCategories,
+            ExtraOptions = options.ExtraOptions,
+            PreGeneratedWaveform = waveform
+        };
+    }
+
+    /// <summary>
+    /// Builds the internal options object that gets passed to window.WWebJS.sendMessage().
+    /// Follows the upstream Client.sendMessage logic for mapping MessageSendOptions to internal format.
+    /// </summary>
+    // @wwebjs-source Client.sendMessage options mapping -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/Client.js#L1004-L1065
+    private static Dictionary<string, object?> BuildInternalOptions(
+        string content,
+        MessageSendOptions? options,
+        out string effectiveContent)
+    {
+        effectiveContent = content;
+        var result = new Dictionary<string, object?>();
+
+        if (options is null) return result;
+
+        // Link preview
+        if (!options.LinkPreview)
+            result["linkPreview"] = false;
+
+        // Media-related flags
+        if (options.SendAudioAsVoice)
+            result["sendAudioAsVoice"] = true;
+
+        if (options.SendVideoAsGif)
+            result["sendVideoAsGif"] = true;
+
+        if (options.SendMediaAsSticker)
+            result["sendMediaAsSticker"] = true;
+
+        if (options.SendMediaAsDocument)
+            result["sendMediaAsDocument"] = true;
+
+        if (options.SendMediaAsHd)
+            result["sendMediaAsHd"] = true;
+
+        if (options.IsViewOnce)
+            result["isViewOnce"] = true;
+
+        // Caption
+        if (options.Caption is not null)
+            result["caption"] = options.Caption;
+
+        // Quoted message (reply)
+        if (options.QuotedMessageId is not null)
+            result["quotedMessageId"] = options.QuotedMessageId;
+
+        // Parse vCards
+        if (!options.ParseVCards)
+            result["parseVCards"] = false;
+
+        // Mentions
+        if (options.Mentions is { Count: > 0 })
+            result["mentionedJidList"] = options.Mentions;
+
+        // Extra options
+        if (options.ExtraOptions is { Count: > 0 })
+            result["extraOptions"] = options.ExtraOptions;
+
+        // Media attachment - when media is present, content becomes empty and
+        // the media data is passed inside options for the injected JS to process
+        if (options.Media is not null)
+        {
+            result["media"] = new
+            {
+                mimetype = options.Media.MimeType,
+                data = options.Media.Data,
+                filename = options.Media.FileName,
+                filesize = options.Media.FileSize
+            };
+
+            // When media is provided via options, the original content becomes the caption
+            if (!string.IsNullOrEmpty(content))
+                result["caption"] = content;
+
+            effectiveContent = string.Empty;
+        }
+
+        // Pre-generated waveform for voice messages (server-side via ffmpeg)
+        // Passed as an int array (0-100) so the JS side can set it on mediaData.waveform
+        if (options.PreGeneratedWaveform is { Length: > 0 })
+            result["pttWaveform"] = options.PreGeneratedWaveform.Select(b => (int)b).ToArray();
+
+        return result;
     }
 
     // @wwebjs-source Chat.fetchMessages -> https://github.com/pedroslopez/whatsapp-web.js/blob/main/src/structures/Chat.js#L192-L223

@@ -436,7 +436,7 @@ public class Client(ClientOptions? options = null, HttpClient? httpClient = null
     private void InitializeServices()
     {
         Chat = new ChatService(_page!, JsonOptions, _logger);
-        Message = new MessageService(_page!, JsonOptions, _logger);
+        Message = new MessageService(_page!, JsonOptions, _logger, _options.FfmpegPath);
         Group = new GroupService(_page!, JsonOptions, _logger);
         Profile = new ProfileService(_page!, _httpClient, _logger);
         Label = new LabelService(_page!, JsonOptions, _logger);

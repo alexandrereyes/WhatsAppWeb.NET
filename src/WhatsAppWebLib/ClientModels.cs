@@ -34,4 +34,10 @@ public class ClientOptions
     public string? PairWithPhoneNumber { get; init; }
     public bool ShowPairingNotification { get; set; } = true;
     public int PairingCodeIntervalMs { get; set; } = 180000; // 3 minutes
+
+    /// <summary>
+    /// Path to the ffmpeg binary used for media preprocessing (voice waveform, video stickers).
+    /// When null, defaults to "ffmpeg" (expects ffmpeg on PATH).
+    /// </summary>
+    public string? FfmpegPath { get; init; }
 }

@@ -1,0 +1,38 @@
+name: Publish NuGet Package
+
+on:
+  push:
+    branches: [master, main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Calculate version
+        id: version
+        run: |
+          # Read VersionPrefix from .csproj
+          VERSION_PREFIX=$(grep -oP '<VersionPrefix>\K[^<]+' src/WhatsAppWebLib/WhatsAppWebLib.csproj)
+          # Extract major.minor and calculate patch from run number
+          MAJOR_MINOR=$(echo "$VERSION_PREFIX" | grep -oP '^\d+\.\d+')
+          VERSION="${MAJOR_MINOR}.${GITHUB_RUN_NUMBER}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: $VERSION"
+
+      - name: Build
+        run: dotnet build src/WhatsAppWebLib/WhatsAppWebLib.csproj -c Release -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Pack
+        run: dotnet pack src/WhatsAppWebLib/WhatsAppWebLib.csproj -c Release --no-build -p:Version=${{ steps.version.outputs.version }} -o ./nupkgs
+
+      - name: Push to NuGet
+        run: dotnet nuget push ./nupkgs/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate

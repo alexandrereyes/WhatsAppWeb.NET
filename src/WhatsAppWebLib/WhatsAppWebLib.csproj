@@ -8,7 +8,7 @@
 
         <!-- NuGet Package Metadata -->
         <PackageId>WhatsAppWeb.NET</PackageId>
-        <Version>0.0.2</Version>
+        <VersionPrefix>0.1.0</VersionPrefix>
         <Authors>Alexandre Reyes Martins</Authors>
         <Description>C# / .NET port of whatsapp-web.js — a WhatsApp Web client library using Microsoft Playwright for browser automation. Supports QR Code and Phone Pairing Code authentication, messaging, chats, groups, labels, and profile management.</Description>
         <PackageTags>whatsapp;whatsapp-web;playwright;bot;messaging;chat</PackageTags>
